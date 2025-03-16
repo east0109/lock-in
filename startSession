@@ -1,0 +1,41 @@
+    import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+    import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+    
+    const client = new DynamoDBClient({});
+    const docClient = DynamoDBDocumentClient.from(client);
+    
+    export const handler = async (event) => {
+        try {
+            const { email, prompt } = JSON.parse(event.body);
+            if (!email || !prompt) {
+                return {
+                    statusCode: 400,
+                    body: JSON.stringify({ message: "Email and prompt are required" }),
+                };
+            }
+    
+            const timestamp = Math.floor(Date.now() / 1000);
+            const params = {
+                TableName: "unihack", // Replace with your table name
+                Item: {
+                    PK: email,
+                    SK: 0,
+                    timestamp,
+                    prompt,
+                },
+            };
+    
+            await docClient.send(new PutCommand(params));
+    
+            return {
+                statusCode: 200,
+                body: JSON.stringify({ message: "Entry created successfully" }),
+            };
+        } catch (error) {
+            return {
+                statusCode: 500,
+                body: JSON.stringify({ message: "Error creating entry", error: error.message }),
+            };
+        }
+    };
+    
