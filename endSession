@@ -1,0 +1,101 @@
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+
+// Initialize DynamoDB client
+const client = new DynamoDBClient({});
+const dynamoDB = DynamoDBDocumentClient.from(client);
+
+export const handler = async (event) => {
+    const { email } = JSON.parse(event.body);
+    const tableName = "unihack";  // Replace with your actual table name
+
+    if (!email) {
+        return {
+            statusCode: 400,
+            body: JSON.stringify({ error: "Email is required." })
+        };
+    }
+
+    try {
+        // Query the database for entries with the given email
+        const queryParams = {
+            TableName: tableName,
+            KeyConditionExpression: "PK = :email",
+            ExpressionAttributeValues: {
+                ":email": email
+            }
+        };
+
+        const result = await dynamoDB.send(new QueryCommand(queryParams));
+        const items = result.Items;
+
+        if (!items || items.length === 0) {
+            return {
+                statusCode: 404,
+                body: JSON.stringify({ message: "No entries found for this email." })
+            };
+        }
+
+        // Filter out the first entry if SK is 0
+        const filteredItems = items.filter((item, index) => !(index === 0 && item.SK === 0));
+
+        if (filteredItems.length === 0) {
+            return {
+                statusCode: 404,
+                body: JSON.stringify({ message: "No valid entries to process." })
+            };
+        }
+
+        // Calculate true/false percentages
+        const totalEntries = filteredItems.length;
+        const trueCount = filteredItems.filter(item => item.isRelated === true).length;
+        const falseCount = totalEntries - trueCount;
+
+        const truePercentage = ((trueCount / totalEntries) * 100).toFixed(2);
+        const falsePercentage = ((falseCount / totalEntries) * 100).toFixed(2);
+
+        // Calculate category percentages
+        const categoryCounts = {};
+        const validCategories = ["Study", "Social", "Work", "Gaming", "Entertainment", "News", "Other"];
+
+        filteredItems.forEach(item => {
+            const category = item.category || "Other"; // Default to "Other" if category is missing
+            if (validCategories.includes(category)) {
+                categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+            }
+        });
+
+        // Convert counts to percentages
+        const categoryPercentages = {};
+        Object.keys(categoryCounts).forEach(category => {
+            categoryPercentages[category] = ((categoryCounts[category] / totalEntries) * 100).toFixed(2);
+        });
+
+        // Delete all processed entries
+        const deletePromises = filteredItems.map(item => {
+            const deleteParams = {
+                TableName: tableName,
+                Key: { PK: email, SK: item.SK }
+            };
+            return dynamoDB.send(new DeleteCommand(deleteParams));
+        });
+
+        await Promise.all(deletePromises);
+
+        return {
+            statusCode: 200,
+            body: JSON.stringify({
+                message: "Entries processed and deleted successfully.",
+                truePercentage,
+                falsePercentage,
+                categoryPercentages
+            })
+        };
+    } catch (error) {
+        console.error("Error processing request:", error);
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ error: "Internal Server Error" })
+        };
+    }
+};
